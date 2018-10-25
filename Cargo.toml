@@ -1,0 +1,10 @@
+[package]
+name = "wna"
+version = "0.1.0"
+authors = ["Yakov Bakhmatov <yakov@bakhmatov.ru>"]
+description = "Windows Notification Area"
+license = "MIT"
+
+[dependencies]
+error-chain = "0.12.0"
+winapi = { version = "0.3", features = ["errhandlingapi", "libloaderapi", "shellapi", "winuser"] }
