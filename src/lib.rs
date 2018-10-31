@@ -13,7 +13,7 @@ error_chain! {
 
 }
 
-pub type Action = fn(&mut Wna) -> ();
+pub type Action = Box<Fn(&mut Wna) -> () + Send + Sync + 'static>;
 
 pub enum Icon {
     File(String),
@@ -24,6 +24,15 @@ pub enum Icon {
 pub enum MenuItem {
     Action(String, Action),
     Separator,
+}
+
+impl MenuItem {
+
+    pub fn action<F>(title: String, action: F) -> MenuItem
+            where F: Fn(&mut Wna) -> () + Send + Sync + 'static {
+        MenuItem::Action(title, Box::new(action))
+    }
+
 }
 
 pub enum Event {
@@ -63,14 +72,15 @@ impl Wna {
         lock.set_tip(tip)
     }
 
-    pub fn add_menu_item(&mut self, item: &MenuItem) -> Result<()> {
+    pub fn add_menu_item(&mut self, item: MenuItem) -> Result<()> {
         let mut lock = self.repr.lock().unwrap();
         lock.add_menu_item(item)
     }
 
-    pub fn show_balloon(&mut self, title: &str, body: &str, action: Action) -> Result<()> {
+    pub fn show_balloon<F>(&mut self, title: &str, body: &str, action: F) -> Result<()>
+            where F: Fn(&mut Wna) -> () + Send + Sync + 'static {
         let mut lock = self.repr.lock().unwrap();
-        lock.show_balloon(title, body, action)
+        lock.show_balloon(title, body, Box::new(action))
     }
 
     pub fn close(&mut self) -> Result<()> {
@@ -87,12 +97,14 @@ impl Wna {
 }
 
 impl Clone for Wna {
+
     fn clone(&self) -> Self {
         Wna {
             repr: Arc::clone(&self.repr),
             thread: None,
         }
     }
+
 }
 
 impl WnaBuilder {
@@ -117,7 +129,7 @@ impl WnaBuilder {
         self
     }
 
-    pub fn build(&mut self) -> Result<Wna> {
+    pub fn build(self) -> Result<Wna> {
         let (sender, reciever) = channel();
         let window_class = self.window_class.unwrap_or("wna_window_class");
         let window = window::Window::create(window_class, sender.clone())?;
@@ -134,7 +146,7 @@ impl WnaBuilder {
         if let Some(ref tip) = self.tip {
             repr.set_tip(tip)?;
         }
-        for item in self.menu_items.iter() {
+        for item in self.menu_items {
             repr.add_menu_item(item)?;
         }
         let repr = Arc::new(Mutex::new(repr));
@@ -150,7 +162,7 @@ impl WnaBuilder {
 struct Repr {
     window: window::Window,
     last_menu_id: u32,
-    actions: HashMap<u32, Action>,
+    actions: HashMap<u32, Arc<Action>>,
     balloon_action: Option<Action>,
     event_sender: Sender<Event>,
 }
@@ -171,12 +183,12 @@ impl Repr {
         self.window.set_tip(tip)
     }
 
-    pub fn add_menu_item(&mut self, item: &MenuItem) -> Result<()> {
+    pub fn add_menu_item(&mut self, item: MenuItem) -> Result<()> {
         match item {
-            MenuItem::Action(ref title, ref action) => {
+            MenuItem::Action(title, action) => {
                 let id = self.next_menu_id();
-                self.window.add_menu_item(id, title)?;
-                self.actions.insert(id, *action);
+                self.window.add_menu_item(id, &title)?;
+                self.actions.insert(id, Arc::new(action));
                 Ok(())
             },
             MenuItem::Separator => {
@@ -214,7 +226,7 @@ fn start_event_loop(receiver: Receiver<Event>, repr: Arc<Mutex<Repr>>) -> thread
                     Event::Menu(id) => {
                         let action = {
                             let mut repr = repr.lock().unwrap();
-                            repr.actions.get(&id).map(|f| *f)
+                            repr.actions.get(&id).map(|f| Arc::clone(f))
                         };
                         if let Some(action) = action {
                             let mut wna = Wna {
