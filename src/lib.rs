@@ -86,6 +86,15 @@ impl Wna {
 
 }
 
+impl Clone for Wna {
+    fn clone(&self) -> Self {
+        Wna {
+            repr: Arc::clone(&self.repr),
+            thread: None,
+        }
+    }
+}
+
 impl WnaBuilder {
 
     pub fn window_class(&mut self, class: &'static str) -> &mut Self {
